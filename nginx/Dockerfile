@@ -8,17 +8,13 @@ RUN npm ci
 
 COPY frontend/ ./
 
-ARG VITE_API_URL=/api/image-rag
-ENV VITE_API_URL=${VITE_API_URL}
-
 RUN npm run build
 
 
 FROM nginx:1.27-alpine
 
-RUN rm /etc/nginx/conf.d/default.conf
-
-COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx/nginx.conf \
+    /etc/nginx/conf.d/default.conf
 
 COPY --from=frontend-builder \
     /frontend/dist \

@@ -1,5 +1,7 @@
 import axios from "axios";
 
+import { appConfig } from "../config";
+
 import {
     clearTokens,
     getAccessToken,
@@ -8,20 +10,20 @@ import {
 } from "./tokenStorage";
 
 
-const API_BASE_URL =
-    import.meta.env.VITE_API_URL ||
-    "/api";
-
-
 export const apiClient = axios.create({
-    baseURL: API_BASE_URL,
-    timeout: 60000,
+    baseURL: appConfig.apiBaseUrl,
+    timeout: appConfig.requestTimeout,
+    headers: {
+        "Content-Type":
+            "application/json",
+    },
 });
 
 
 apiClient.interceptors.request.use(
     (config) => {
-        const accessToken = getAccessToken();
+        const accessToken =
+            getAccessToken();
 
         if (accessToken) {
             config.headers.Authorization =
@@ -30,6 +32,7 @@ apiClient.interceptors.request.use(
 
         return config;
     },
+
     (error) => {
         return Promise.reject(error);
     },
@@ -39,55 +42,68 @@ apiClient.interceptors.request.use(
 let refreshPromise = null;
 
 
-const requestNewAccessToken = async () => {
-    const refreshToken = getRefreshToken();
+const requestNewAccessToken =
+    async () => {
+        const refreshToken =
+            getRefreshToken();
 
-    if (!refreshToken) {
-        throw new Error(
-            "Refresh Token이 없습니다.",
+        if (!refreshToken) {
+            throw new Error(
+                "Refresh Token이 없습니다.",
+            );
+        }
+
+        const response = await axios.post(
+            `${appConfig.apiBaseUrl}/auth/refresh`,
+            {
+                refresh_token:
+                refreshToken,
+            },
+            {
+                timeout: 10000,
+            },
         );
-    }
 
-    const response = await axios.post(
-        `${API_BASE_URL}/auth/refresh`,
-        {
-            refresh_token: refreshToken,
-        },
-        {
-            timeout: 10000,
-        },
-    );
+        const newAccessToken =
+            response.data.access_token;
 
-    const newAccessToken =
-        response.data.access_token;
+        saveAccessToken(
+            newAccessToken,
+        );
 
-    saveAccessToken(newAccessToken);
-
-    return newAccessToken;
-};
+        return newAccessToken;
+    };
 
 
 apiClient.interceptors.response.use(
     (response) => response,
 
     async (error) => {
-        const originalRequest = error.config;
+        const originalRequest =
+            error.config;
 
-        if (
-            error.response?.status !== 401 ||
-            !originalRequest ||
-            originalRequest._retry
-        ) {
-            return Promise.reject(error);
-        }
+        const isUnauthorized =
+            error.response?.status === 401;
 
         const requestUrl =
-            originalRequest.url || "";
+            originalRequest?.url || "";
+
+        const isAuthRequest =
+            requestUrl.includes(
+                "/auth/login",
+            ) ||
+            requestUrl.includes(
+                "/auth/signup",
+            ) ||
+            requestUrl.includes(
+                "/auth/refresh",
+            );
 
         if (
-            requestUrl.includes("/auth/login") ||
-            requestUrl.includes("/auth/signup") ||
-            requestUrl.includes("/auth/refresh")
+            !isUnauthorized ||
+            !originalRequest ||
+            originalRequest._retry ||
+            isAuthRequest
         ) {
             return Promise.reject(error);
         }
@@ -97,26 +113,32 @@ apiClient.interceptors.response.use(
         try {
             if (!refreshPromise) {
                 refreshPromise =
-                    requestNewAccessToken().finally(
-                        () => {
-                            refreshPromise = null;
-                        },
-                    );
+                    requestNewAccessToken()
+                        .finally(() => {
+                            refreshPromise =
+                                null;
+                        });
             }
 
             const newAccessToken =
                 await refreshPromise;
 
-            originalRequest.headers.Authorization =
+            originalRequest
+                .headers
+                .Authorization =
                 `Bearer ${newAccessToken}`;
 
-            return apiClient(originalRequest);
+            return apiClient(
+                originalRequest,
+            );
 
         } catch (refreshError) {
             clearTokens();
 
             window.dispatchEvent(
-                new Event("auth:logout"),
+                new Event(
+                    "auth:logout",
+                ),
             );
 
             return Promise.reject(

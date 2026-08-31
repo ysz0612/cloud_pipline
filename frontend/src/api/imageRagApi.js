@@ -14,6 +14,12 @@ export const analyzeFoodImage = async (
     const response = await apiClient.post(
         "/image-rag/analyze",
         formData,
+        {
+            headers: {
+                "Content-Type":
+                    "multipart/form-data",
+            },
+        },
     );
 
     return response.data;
