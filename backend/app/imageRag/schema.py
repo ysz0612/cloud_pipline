@@ -2,25 +2,31 @@ from pydantic import BaseModel, Field
 
 
 class FoodCandidate(BaseModel):
-    """음식 후보 순위 정보"""
+    """
+    음식 후보 한 개의 순위 정보
+    """
 
     rank: int = Field(
+        ge=1,
+        le=3,
         description="음식 후보 순위",
     )
 
     food_name: str = Field(
-        description="음식 이름",
+        description="후보 음식 이름",
     )
 
-    score: float = Field(
+    similarity: float = Field(
         ge=0,
         le=1,
-        description="음식일 가능성. 0부터 1 사이의 값",
+        description="후보 음식 유사도",
     )
 
 
 class ImageRagResponse(BaseModel):
-    """음식 이미지 분석 응답"""
+    """
+    음식 이미지 분석 API 응답
+    """
 
     predicted_food: str = Field(
         description="가장 가능성이 높은 음식 이름",
@@ -29,7 +35,7 @@ class ImageRagResponse(BaseModel):
     confidence: float = Field(
         ge=0,
         le=1,
-        description="최종 음식 예측 신뢰도",
+        description="최종 예측 신뢰도",
     )
 
     image_description: str = Field(
