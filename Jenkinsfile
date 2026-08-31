@@ -80,16 +80,33 @@ pipeline {
                       -f docker-compose.yaml \
                       ps
 
-                    docker exec \
-                      image-rag-nginx \
-                      wget \
-                      --quiet \
-                      --spider \
-                      http://localhost/
+                    for attempt in $(seq 1 15)
+                    do
+                        if docker exec \
+                            image-rag-nginx \
+                            wget \
+                            --quiet \
+                            --spider \
+                            http://127.0.0.1/
+                        then
+                            echo "Nginx deployment check succeeded."
+                            exit 0
+                        fi
+
+                        echo "Waiting for Nginx... (${attempt}/15)"
+                        sleep 2
+                    done
+
+                    echo "Nginx deployment check failed."
+
+                    docker logs \
+                      --tail=100 \
+                      image-rag-nginx
+
+                    exit 1
                 '''
             }
         }
-    }
 
     post {
         success {
