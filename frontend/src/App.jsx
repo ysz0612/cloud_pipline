@@ -13,8 +13,10 @@ import {
 
 
 function App() {
-    const [authModalMode, setAuthModalMode] =
-        useState(null);
+    const [
+        authModalMode,
+        setAuthModalMode,
+    ] = useState(null);
 
     const currentUserQuery =
         useCurrentUserQuery();
@@ -27,15 +29,29 @@ function App() {
             setAuthModalMode(null);
         };
 
+        const handleAuthRequired = () => {
+            setAuthModalMode("login");
+        };
+
         window.addEventListener(
             "auth:logout",
             handleLogout,
+        );
+
+        window.addEventListener(
+            "auth:required",
+            handleAuthRequired,
         );
 
         return () => {
             window.removeEventListener(
                 "auth:logout",
                 handleLogout,
+            );
+
+            window.removeEventListener(
+                "auth:required",
+                handleAuthRequired,
             );
         };
     }, []);
