@@ -21,16 +21,20 @@ import {
 
 export const AUTH_QUERY_KEY = [
     "auth",
-    "current-user",
+    "currentUser",
 ];
 
 
 export const useCurrentUserQuery = () => {
+    const tokenExists =
+        hasAccessToken();
+
     return useQuery({
         queryKey: AUTH_QUERY_KEY,
         queryFn: getCurrentUser,
-        enabled: hasAccessToken(),
+        enabled: tokenExists,
         retry: false,
+        staleTime: 5 * 60 * 1000,
     });
 };
 
@@ -43,7 +47,8 @@ export const useSignupMutation = () => {
 
 
 export const useLoginMutation = () => {
-    const queryClient = useQueryClient();
+    const queryClient =
+        useQueryClient();
 
     return useMutation({
         mutationFn: login,
@@ -52,6 +57,7 @@ export const useLoginMutation = () => {
             saveTokens({
                 accessToken:
                 data.access_token,
+
                 refreshToken:
                 data.refresh_token,
             });
@@ -66,27 +72,54 @@ export const useLoginMutation = () => {
 
 
 export const useLogoutMutation = () => {
-    const queryClient = useQueryClient();
+    const queryClient =
+        useQueryClient();
 
     return useMutation({
         mutationFn: async () => {
             const refreshToken =
                 getRefreshToken();
 
-            if (refreshToken) {
-                await logout(refreshToken);
+            if (!refreshToken) {
+                return;
             }
+
+            await logout(refreshToken);
         },
 
-        onSettled: () => {
+        onSettled: async () => {
+            /*
+             * 로그아웃 API 성공 여부와 상관없이
+             * 브라우저 로그인 정보를 정리합니다.
+             */
+
             clearTokens();
 
+            await queryClient.cancelQueries({
+                queryKey:
+                AUTH_QUERY_KEY,
+            });
+
+            /*
+             * 현재 사용자 캐시를 null로 바꿔서
+             * App.jsx가 즉시 로그아웃 상태로
+             * 다시 렌더링되게 합니다.
+             */
+            queryClient.setQueryData(
+                AUTH_QUERY_KEY,
+                null,
+            );
+
             queryClient.removeQueries({
-                queryKey: AUTH_QUERY_KEY,
+                queryKey:
+                AUTH_QUERY_KEY,
+                exact: true,
             });
 
             window.dispatchEvent(
-                new Event("auth:logout"),
+                new Event(
+                    "auth:logout",
+                ),
             );
         },
     });
