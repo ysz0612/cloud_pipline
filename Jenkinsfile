@@ -2,6 +2,7 @@ pipeline {
     agent any
 
     options {
+        skipDefaultCheckout(true)
         disableConcurrentBuilds()
         timestamps()
 
@@ -107,6 +108,7 @@ pipeline {
                 '''
             }
         }
+    }
 
     post {
         success {
@@ -131,8 +133,6 @@ pipeline {
             sh '''
                 rm -f .env
             '''
-
-            deleteDir()
         }
     }
 }
