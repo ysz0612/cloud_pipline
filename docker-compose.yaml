@@ -1,0 +1,47 @@
+name: image-rag-project
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: image-rag-backend
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    expose:
+      - "8000"
+    networks:
+      - image-rag-network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+      args:
+        VITE_API_URL: /api/image-rag
+    container_name: image-rag-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - image-rag-network
+
+networks:
+  image-rag-network:
+    driver: bridge
