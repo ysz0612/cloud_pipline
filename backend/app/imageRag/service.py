@@ -1,187 +1,177 @@
 import base64
-import json
-import os
-from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import UploadFile
-from openai import OpenAI
+from openai import AsyncOpenAI
 
-from app.imageRag.schema import ImageRagResponse
-
-
-# 로컬 실행 시:
-# project/backend/app/imageRag/service.py
-# parents[3] = project
-PROJECT_DIR = Path(__file__).resolve().parents[3]
-ENV_FILE = PROJECT_DIR / ".env"
-
-# 로컬에서는 project/.env를 읽습니다.
-# Docker에서는 docker-compose의 env_file로 주입됩니다.
-load_dotenv(ENV_FILE)
-
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-VISION_MODEL = os.getenv(
-    "OPENAI_VISION_MODEL",
-    "gpt-4o-mini",
-)
-
-
-if not OPENAI_API_KEY:
-    raise RuntimeError(
-        "OPENAI_API_KEY가 설정되지 않았습니다. "
-        "프로젝트 최상단의 .env 파일을 확인하세요."
-    )
-
-
-client = OpenAI(
-    api_key=OPENAI_API_KEY,
+from app.config import settings
+from app.imageRag.schema import (
+    FoodCandidate,
+    ImageRagResponse,
 )
 
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg",
+    "image/jpg",
     "image/png",
     "image/webp",
 }
 
-
-def encode_image(
-    image_bytes: bytes,
-    content_type: str,
-) -> str:
-    encoded_image = base64.b64encode(
-        image_bytes
-    ).decode("utf-8")
-
-    return (
-        f"data:{content_type};base64,"
-        f"{encoded_image}"
-    )
+MAX_IMAGE_SIZE = 10 * 1024 * 1024
 
 
-def remove_code_block(text: str) -> str:
-    cleaned_text = text.strip()
+SYSTEM_PROMPT = """
+당신은 한국 음식 이미지를 분석하는 전문가입니다.
 
-    if cleaned_text.startswith("```json"):
-        cleaned_text = cleaned_text[7:]
-    elif cleaned_text.startswith("```"):
-        cleaned_text = cleaned_text[3:]
+사용자가 업로드한 음식 사진을 확인하고 다음 내용을 분석하세요.
 
-    if cleaned_text.endswith("```"):
-        cleaned_text = cleaned_text[:-3]
+분석 조건:
+1. 사진에서 가장 가능성이 높은 음식 이름을 찾으세요.
+2. 음식의 재료, 모양, 색상, 조리 방법 등 특징을 설명하세요.
+3. 해당 음식으로 판단한 이유를 구체적으로 설명하세요.
+4. 가능성이 높은 음식 후보를 정확히 3개 제시하세요.
+5. 후보는 가능성이 높은 순서대로 작성하세요.
+6. 모든 점수는 0부터 1 사이의 숫자로 작성하세요.
+7. candidates의 rank는 반드시 1, 2, 3이어야 합니다.
+8. 서로 다른 음식 후보를 작성하세요.
+9. 음식이 아닌 이미지라도 임의로 확신하지 말고 낮은 점수를 사용하세요.
+10. 모든 설명은 한국어로 작성하세요.
 
-    return cleaned_text.strip()
+예시:
+- 1순위: 김밥, score 0.93
+- 2순위: 충무김밥, score 0.61
+- 3순위: 주먹밥, score 0.35
+"""
+
+
+def validate_image(image: UploadFile) -> None:
+    """
+    업로드 파일의 형식을 검사합니다.
+    """
+    if image is None:
+        raise ValueError("이미지 파일이 필요합니다.")
+
+    if not image.filename:
+        raise ValueError("이미지 파일 이름이 없습니다.")
+
+    if image.content_type not in ALLOWED_IMAGE_TYPES:
+        raise ValueError(
+            "JPG, JPEG, PNG, WEBP 형식의 이미지만 업로드할 수 있습니다."
+        )
 
 
 async def run_image_rag(
     image: UploadFile,
 ) -> ImageRagResponse:
-    content_type = image.content_type or ""
-
-    if content_type not in ALLOWED_IMAGE_TYPES:
-        raise ValueError(
-            "JPG, JPEG, PNG, WEBP 이미지만 "
-            "업로드할 수 있습니다."
-        )
+    """
+    업로드된 음식 이미지를 OpenAI Vision으로 분석하고
+    가능성이 높은 음식 후보 3개를 반환합니다.
+    """
+    validate_image(image)
 
     image_bytes = await image.read()
 
     if not image_bytes:
-        raise ValueError(
-            "업로드한 이미지가 비어 있습니다."
-        )
+        raise ValueError("업로드된 이미지 파일이 비어 있습니다.")
 
-    image_url = encode_image(
-        image_bytes=image_bytes,
-        content_type=content_type,
+    if len(image_bytes) > MAX_IMAGE_SIZE:
+        raise ValueError("이미지 크기는 10MB 이하여야 합니다.")
+
+    content_type = image.content_type or "image/jpeg"
+
+    encoded_image = base64.b64encode(
+        image_bytes
+    ).decode("utf-8")
+
+    image_data_url = (
+        f"data:{content_type};base64,{encoded_image}"
     )
 
-    prompt = """
-당신은 한국 음식 이미지 분석 전문가입니다.
-
-업로드된 이미지를 확인하고 다음 내용을 분석하세요.
-
-1. 이미지에 있는 음식의 정확한 종류
-2. 음식에서 관찰되는 주요 재료
-3. 음식의 색상과 형태
-4. 국물 유무
-5. 대표적인 조리 방식
-6. 일반적인 맛과 식감
-7. 해당 음식이라고 판단한 시각적인 근거
-
-음식 이름은 한국어로 답하세요.
-
-확실하지 않은 경우에도 이미지에서 가장 가능성이 높은
-음식 하나를 선택하세요.
-
-반드시 다음 JSON 형식으로만 응답하세요.
-
-{
-  "predicted_food": "음식 이름",
-  "confidence": 0.0,
-  "image_description": "음식의 주요 재료, 조리 방법, 맛, 형태 등의 특징",
-  "reason": "사진 속 음식을 해당 음식이라고 판단한 이유"
-}
-
-confidence는 0.0 이상 1.0 이하의 숫자로 작성하세요.
-JSON 외의 설명이나 마크다운은 출력하지 마세요.
-"""
-
-    response = client.responses.create(
-        model=VISION_MODEL,
-        input=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": prompt,
-                    },
-                    {
-                        "type": "input_image",
-                        "image_url": image_url,
-                        "detail": "low",
-                    },
-                ],
-            }
-        ],
-    )
-
-    result_text = remove_code_block(
-        response.output_text
+    client = AsyncOpenAI(
+        api_key=settings.openai_api_key,
     )
 
     try:
-        result = json.loads(result_text)
+        completion = await client.chat.completions.parse(
+            model=settings.openai_vision_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "이 음식 이미지를 분석해서 "
+                                "가장 가능성이 높은 음식과 "
+                                "후보 음식 3개의 순위를 알려주세요."
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_data_url,
+                                "detail": "auto",
+                            },
+                        },
+                    ],
+                },
+            ],
+            response_format=ImageRagResponse,
+        )
 
-    except json.JSONDecodeError as error:
+    except Exception as error:
         raise RuntimeError(
-            "OpenAI 응답을 JSON으로 변환하지 못했습니다."
+            f"OpenAI 이미지 분석 요청에 실패했습니다: {error}"
         ) from error
 
-    confidence = float(
-        result.get("confidence", 0.0)
+    message = completion.choices[0].message
+
+    if message.refusal:
+        raise ValueError(
+            f"이미지 분석이 거절되었습니다: {message.refusal}"
+        )
+
+    result = message.parsed
+
+    if result is None:
+        raise RuntimeError(
+            "OpenAI 응답을 분석 결과로 변환하지 못했습니다."
+        )
+
+    if len(result.candidates) != 3:
+        raise RuntimeError(
+            "음식 후보가 정확히 3개 반환되지 않았습니다."
+        )
+
+    # 점수가 높은 후보부터 정렬합니다.
+    sorted_candidates = sorted(
+        result.candidates,
+        key=lambda candidate: candidate.score,
+        reverse=True,
     )
 
-    confidence = max(
-        0.0,
-        min(confidence, 1.0),
-    )
+    # rank를 항상 1, 2, 3으로 다시 설정합니다.
+    ranked_candidates = [
+        FoodCandidate(
+            rank=index,
+            food_name=candidate.food_name,
+            score=candidate.score,
+        )
+        for index, candidate in enumerate(
+            sorted_candidates,
+            start=1,
+        )
+    ]
 
+    # 최종 음식과 신뢰도는 1순위 후보에 맞춥니다.
     return ImageRagResponse(
-        predicted_food=result.get(
-            "predicted_food",
-            "알 수 없는 음식",
-        ),
-        confidence=confidence,
-        image_description=result.get(
-            "image_description",
-            "음식 특징을 분석하지 못했습니다.",
-        ),
-        reason=result.get(
-            "reason",
-            "판단 근거를 생성하지 못했습니다.",
-        ),
+        predicted_food=ranked_candidates[0].food_name,
+        confidence=ranked_candidates[0].score,
+        image_description=result.image_description,
+        reason=result.reason,
+        candidates=ranked_candidates,
     )
